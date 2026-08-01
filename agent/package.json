@@ -1,0 +1,18 @@
+{
+  "name": "datapulse-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test",
+    "smoke": "node -e \"import('./core.js').then(() => console.log('agent import ok'))\""
+  },
+  "dependencies": {
+    "@openai/agents": "0.14.1",
+    "zod": "4.4.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
