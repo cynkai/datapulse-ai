@@ -21,7 +21,7 @@ export function atomicityAxes(claim) {
   const axes = [];
   if (/\d|%|퍼센트|배|증가|감소/u.test(claim)) axes.push('수치');
   if (/\b(?:19|20)\d{2}\b|년|월|분기|시점|최근/u.test(claim)) axes.push('시점');
-  if (/그리고|이며|하면서|\band\b|대비|보다|관계|상관|영향/iu.test(claim)) axes.push('관계');
+  if (/그리고|이며|하면서|하고(?=\s)|\band\b|대비|보다|관계|상관|영향/iu.test(claim)) axes.push('관계');
   return axes;
 }
 

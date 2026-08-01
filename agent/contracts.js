@@ -11,7 +11,7 @@ export const verdictNameSchema = z.enum([
 
 export function isAtomicClaimText(claim) {
   const synthesis = /(접근법\s*\d+개|종류\s*\d+개|분류할 수|전반적 경향|three approaches|categories|overall trend|can be classified)/i;
-  const joinsClaims = /그리고|이며|하면서|\band\b|[;；]/iu;
+  const joinsClaims = /그리고|이며|하면서|하고(?=\s)|\band\b|[;；]/iu;
   return !synthesis.test(claim) && !joinsClaims.test(claim);
 }
 

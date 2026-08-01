@@ -38,6 +38,21 @@ test('planner rejects synthesis or multi-fact claims', async () => {
   await assert.rejects(planner('specific research question'), /single|단일|claim/i);
 });
 
+test('bug report: Korean -하고 compound is rejected by PLAN and classified not_atomic by JUDGE', async () => {
+  const claim = 'Falco는 시스템 콜을 감시하고 런타임 위협을 탐지한다';
+
+  await assert.rejects(createPlanner()(claim), /single|단일|claim/i);
+
+  const [verdict] = judgeEvidence({
+    sq_id: 'sq1',
+    claims: [claim],
+    evidence: { sq_id: 'sq1', references: [], chunks: [] },
+  });
+  assert.equal(verdict.claim, claim);
+  assert.equal(verdict.verdict, 'not_atomic');
+  assert.match(verdict.reason, /섞인 축: 관계/);
+});
+
 test('liner search rejects an sq_id that was not issued by the plan', async () => {
   const state = createDependencyState();
   state.recordPlan({
