@@ -5,6 +5,16 @@ const PORT = Number(process.env.PORT || 5001);
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
 
+  if (req.method === 'OPTIONS' && url.pathname.startsWith('/api/v1/')) {
+    res.writeHead(204, {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+    });
+    res.end();
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/health') {
     writeJson(res, 200, { status: 'ok', mode: 'offline-emergency' });
     return;
@@ -49,7 +59,10 @@ function handleVisualAnswer(req, res) {
     })
     .catch((err) => {
       console.error(`[mock] failed to read request body: ${err.message}`);
-      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.writeHead(500, {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      });
       res.end(JSON.stringify({ error: 'Failed to read request body' }));
     });
 }
@@ -184,6 +197,7 @@ function isPlainObject(value) {
 function writeJson(res, status, body) {
   res.writeHead(status, {
     'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
     'X-Mock-Mode': 'offline-emergency',
   });
   res.end(JSON.stringify(body));
