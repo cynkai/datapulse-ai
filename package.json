@@ -1,0 +1,16 @@
+{
+  "name": "datapulse-ai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DataPulse AI - Autonomous Visual Research & Analytics Copilot (AGENT:24 Hackathon, Liner Track)",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "dev:server": "npm --workspace server run dev",
+    "dev:web": "npm --workspace web run dev",
+    "dev:mock": "node mock/index.js",
+    "build": "npm --workspace web run build"
+  }
+}
