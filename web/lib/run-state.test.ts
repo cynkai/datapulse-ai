@@ -24,3 +24,24 @@ test("marks unsuccessful completion as an error", () => {
 
   assert.equal(nextStateForEvent("streaming", event), "error");
 });
+
+test("keeps a Liner search failure visible through its terminal completion", () => {
+  const failure: AgentEvent = {
+    kind: "error",
+    code: "liner_search_failed",
+    message: "Liner API returned HTTP 502",
+    raw: { type: "error", code: "liner_search_failed" },
+    rawJson: '{"type":"error","code":"liner_search_failed"}',
+  };
+  const completion: AgentEvent = {
+    kind: "completion",
+    ok: false,
+    raw: { type: "completion", ok: false },
+    rawJson: '{"type":"completion","ok":false}',
+  };
+
+  const failedState = nextStateForEvent("streaming", failure);
+
+  assert.equal(failedState, "liner_error");
+  assert.equal(nextStateForEvent(failedState, completion), "liner_error");
+});

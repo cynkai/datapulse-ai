@@ -11,8 +11,9 @@ export const verdictNameSchema = z.enum([
 
 export function isAtomicClaimText(claim) {
   const synthesis = /(접근법\s*\d+개|종류\s*\d+개|분류할 수|전반적 경향|three approaches|categories|overall trend|can be classified)/i;
+  const dateRange = /\bbetween\s+(?:19|20)\d{2}\s+and\s+(?:19|20)\d{2}\b/i;
   const joinsClaims = /그리고|이며|하면서|하고(?=\s)|\band\b|[;；]/iu;
-  return !synthesis.test(claim) && !joinsClaims.test(claim);
+  return !synthesis.test(claim) && (!joinsClaims.test(claim) || dateRange.test(claim) && !/\band\b(?!\s+(?:19|20)\d{2}\b)/iu.test(claim));
 }
 
 const atomicClaimSchema = z.string().trim().min(1).refine(
@@ -34,10 +35,26 @@ export const planOutputSchema = z.object({
   assumption: z.string().trim().min(1).optional(),
 }).strict();
 
+const comparisonQuestionPattern = /비교|대비|차이|compare|comparison|versus|\bvs\.?\b/iu;
+const quantitativeQuestionPattern = /수치|오버헤드|\bcpu\b|프로세서|지연|레이턴시|처리량|비율|백분율|퍼센트|점유율|매출|\blatency\b|\boverhead\b|\bthroughput\b|\brates?\b|\bpercent(?:age)?\b|%/iu;
+
+export function questionNeedsVisualization(question) {
+  return comparisonQuestionPattern.test(question) && quantitativeQuestionPattern.test(question);
+}
+
 export const referenceSchema = z.object({
   id: z.string().trim().min(1),
   title: z.string().trim().min(1),
-  url: z.string().url(),
+  url: z.string().url().refine(
+    (url) => {
+      try {
+        return ['http:', 'https:'].includes(new URL(url).protocol);
+      } catch {
+        return false;
+      }
+    },
+    'Reference URL must use the http or https scheme.',
+  ),
   source_group: z.string().trim().min(1).optional(),
 }).passthrough();
 
@@ -51,6 +68,7 @@ export const chunkSchema = z.object({
 
 export const evidenceSchema = z.object({
   sq_id: z.string().trim().min(1),
+  source: z.enum(['live', 'mock']),
   references: z.array(referenceSchema),
   chunks: z.array(chunkSchema),
 }).strict();
@@ -79,14 +97,20 @@ export const chartSpecSchema = z.object({
   }).strict()).min(1),
 }).strict();
 
-export function createDependencyState() {
+export function createDependencyState(originalQuestion = '') {
   let issuedSubQuestions = new Map();
+  let effectiveNeedsVisualization;
 
   return Object.freeze({
     recordPlan(planInput) {
       const plan = planOutputSchema.parse(planInput);
-      issuedSubQuestions = new Map(plan.sub_questions.map((sq) => [sq.id, sq]));
-      return plan;
+      const effectivePlan = planOutputSchema.parse({
+        ...plan,
+        needs_visualization: plan.needs_visualization || questionNeedsVisualization(originalQuestion),
+      });
+      issuedSubQuestions = new Map(effectivePlan.sub_questions.map((sq) => [sq.id, sq]));
+      effectiveNeedsVisualization = effectivePlan.needs_visualization;
+      return effectivePlan;
     },
     assertSearchIssued(searchInput) {
       const issued = issuedSubQuestions.get(searchInput.sq_id);
@@ -100,6 +124,9 @@ export function createDependencyState() {
     },
     issuedIds() {
       return [...issuedSubQuestions.keys()];
+    },
+    needsVisualization() {
+      return effectiveNeedsVisualization;
     },
   });
 }

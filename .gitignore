@@ -15,3 +15,10 @@ build/
 .DS_Store
 *.log
 coverage/
+.omo/
+web/.omo/
+.debug-journal.md
+.final-rerun-safe-run-id
+test-results/
+final-v2/
+round2-*.txt

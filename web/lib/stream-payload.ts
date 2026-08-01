@@ -10,6 +10,7 @@ import type {
   ToolName,
   VerdictName,
 } from "./sse-types.ts";
+import { decodeAgentsSdkToolOutput, evidenceSourceFromLinerOutput, linerFailureMessage } from "./trust-signals.ts";
 
 type JsonRecord = { readonly [key: string]: JsonValue };
 
@@ -22,21 +23,8 @@ function stringField(record: JsonRecord, key: string): string | null {
   return typeof value === "string" ? value : null;
 }
 
-function isJsonValue(value: unknown): value is JsonValue {
-  if (value === null || ["boolean", "number", "string"].includes(typeof value)) return true;
-  if (Array.isArray(value)) return value.every(isJsonValue);
-  if (typeof value !== "object") return false;
-  return Object.values(value).every(isJsonValue);
-}
-
 function decoded(value: JsonValue | undefined): JsonValue | null {
-  if (typeof value !== "string") return value ?? null;
-  try {
-    const parsed: unknown = JSON.parse(value);
-    return isJsonValue(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
+  return decodeAgentsSdkToolOutput(value);
 }
 
 function nestedRecord(value: JsonValue, types: ReadonlySet<string>): JsonRecord | null {
@@ -208,20 +196,28 @@ function mockChartFrom(html: string): ChartSpec | null {
 }
 
 export function createStreamPayloadParser(handlers: StreamChatHandlers, mode: StreamMode) {
-  const calls = new Map<string, ToolName>();
+  const calls = new Map<string, { readonly name: ToolName | null; readonly resultSeen: boolean; readonly invalid: boolean }>();
   let references = new Map<string, Reference>();
   let chartAllowed = mode === "mock";
   let emittedText = false;
+  let pendingError: { readonly code: string; readonly message: string } | null = null;
+  let linerProvenanceInvalid = false;
   let finished = false;
 
-  const finish = (): void => {
-    if (finished) return;
-    finished = true;
-    handlers.onFinish?.();
+  const reportError = (error: { readonly code: string; readonly message: string }): void => {
+    pendingError = { ...error, message: linerFailureMessage(error) };
   };
-  const toolOutput = (name: ToolName, output: JsonValue | null): void => {
-    if (output === null) return;
+  const invalidateLinerProvenance = (): void => {
+    if (linerProvenanceInvalid) return;
+    linerProvenanceInvalid = true;
+    chartAllowed = false;
+    reportError({ code: "liner_provenance_invalid", message: "Liner provenance result is invalid." });
+  };
+  const toolOutput = (name: ToolName, output: JsonValue): void => {
     if (name === "liner_search") {
+      const source = evidenceSourceFromLinerOutput(output);
+      if (source === null || linerProvenanceInvalid) return;
+      handlers.onEvidenceSource?.(source);
       const parsedReferences = referencesFrom(output);
       if (parsedReferences !== null) {
         references = new Map([...references, ...parsedReferences.byId]);
@@ -242,16 +238,37 @@ export function createStreamPayloadParser(handlers: StreamChatHandlers, mode: St
       if (chart !== null) handlers.onChart?.(chart);
     }
   };
+  const validateLinerProvenance = (): void => {
+    if (linerProvenanceInvalid) return;
+    for (const call of calls.values()) {
+      if (call.name === "liner_search" && (!call.resultSeen || call.invalid)) {
+        invalidateLinerProvenance();
+        return;
+      }
+    }
+  };
+  const finish = (): void => {
+    if (finished) return;
+    validateLinerProvenance();
+    finished = true;
+    handlers.onFinish?.();
+  };
 
   return (event: RawAgentEvent): void => {
     if (event.kind === "error") {
-      handlers.onError?.({ code: "agent_run_failed", message: event.message });
+      reportError({ code: event.code ?? "agent_run_failed", message: event.message });
       return;
     }
     if (event.kind === "completion") {
       if (isRecord(event.raw) && !emittedText && typeof event.raw.final_output === "string") handlers.onTextDelta?.(event.raw.final_output);
-      if (event.ok) finish();
-      else handlers.onError?.({ code: "agent_run_failed", message: "에이전트 실행에 실패했습니다." });
+      if (event.ok) {
+        pendingError = null;
+        finish();
+      } else {
+        const error = pendingError ?? { code: "agent_run_failed", message: "에이전트 실행에 실패했습니다." };
+        pendingError = null;
+        handlers.onError?.(error);
+      }
       return;
     }
     if (event.kind !== "event" || !isRecord(event.raw)) return;
@@ -265,25 +282,57 @@ export function createStreamPayloadParser(handlers: StreamChatHandlers, mode: St
       handlers.onTextDelta?.(delta);
     }
     if (topType === "finish") finish();
-    if (topType === "data-error") handlers.onError?.({ code: stringField(data, "code") ?? "mock_error", message: stringField(data, "message") ?? "오프라인 모드 오류가 발생했습니다." });
+    if (topType === "data-error") {
+      const error = {
+        code: stringField(data, "code") ?? "mock_error",
+        message: stringField(data, "message") ?? "오프라인 모드 오류가 발생했습니다.",
+      };
+      reportError(error);
+    }
 
     const call = nestedRecord(event.raw, new Set(["function_call"]));
     if (call !== null) {
       const name = toolName(stringField(call, "name"));
       const callId = stringField(call, "callId") ?? stringField(call, "call_id");
-      if (name !== null && callId !== null) {
-        calls.set(callId, name);
-        handlers.onTool?.(name, "started");
+      if (callId !== null) {
+        const previous = calls.get(callId);
+        if (previous !== undefined) {
+          if (previous.name === "liner_search" || name === "liner_search") invalidateLinerProvenance();
+          calls.set(callId, { name, resultSeen: false, invalid: true });
+        } else {
+          calls.set(callId, { name, resultSeen: false, invalid: false });
+        }
+        if (name !== null) handlers.onTool?.(name, "started");
       }
     }
     const result = nestedRecord(event.raw, new Set(["function_call_result", "function_call_output"]));
     if (result !== null) {
       const callId = stringField(result, "callId") ?? stringField(result, "call_id");
-      const name = toolName(stringField(result, "name")) ?? (callId === null ? null : calls.get(callId) ?? null);
-      if (name !== null) {
-        toolOutput(name, decoded(result.output));
-        handlers.onTool?.(name, "completed");
+      if (callId === null) return;
+      const call = calls.get(callId);
+      if (call === undefined || call.invalid || call.name === null) return;
+      const resultNameValue = stringField(result, "name");
+      const resultName = toolName(resultNameValue);
+      if (resultNameValue !== null && resultName !== call.name) {
+        if (call.name === "liner_search") invalidateLinerProvenance();
+        return;
       }
+      if (call.resultSeen) {
+        if (call.name === "liner_search") invalidateLinerProvenance();
+        return;
+      }
+      const output = decoded(result.output);
+      if (call.name === "liner_search") {
+        if (output === null || evidenceSourceFromLinerOutput(output) === null || linerProvenanceInvalid) {
+          invalidateLinerProvenance();
+          return;
+        }
+      } else if (output === null) {
+        return;
+      }
+      calls.set(callId, { ...call, resultSeen: true });
+      toolOutput(call.name, output);
+      handlers.onTool?.(call.name, "completed");
     }
 
     const oldReferences = referencesFrom(data);

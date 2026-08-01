@@ -8,6 +8,7 @@ export type {
   ChartSeries,
   ChartSpec,
   ChatMessage,
+  EvidenceSource,
   EvidenceVerdict,
   Reference,
   ReferenceChunk,

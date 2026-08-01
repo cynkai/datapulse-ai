@@ -71,12 +71,14 @@ export default function ChatInterface({ suggestions, mode, onAgentEvent }: ChatI
     setMessages((current) => [...current, userMessage, { id: assistantId, role: "assistant", content: "" }]);
     setInput("");
     setIsStreaming(true);
+    onAgentEvent?.({ type: "start" });
 
     const controller = new AbortController();
     abortRef.current = controller;
     void streamChat([...history, { role: "user", content }], {
       onStart: () => onAgentEvent?.({ type: "start" }),
       onTool: (name, status) => onAgentEvent?.({ type: "tool", name, status }),
+      onEvidenceSource: (source) => onAgentEvent?.({ type: "evidence-source", source }),
       onReferences: (references) => onAgentEvent?.({ type: "references", references }),
       onChunks: (chunks) => onAgentEvent?.({ type: "chunks", chunks }),
       onVerdicts: (verdicts) => onAgentEvent?.({ type: "verdicts", verdicts }),

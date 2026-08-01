@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { streamChat, type ChartSpec, type EvidenceVerdict, type Reference, type ReferenceChunk, type StreamMode, type ToolName } from "./sse.ts";
+import { streamChat, type ChartSpec, type EvidenceSource, type EvidenceVerdict, type Reference, type ReferenceChunk, type StreamMode, type ToolName } from "./sse.ts";
 
 const encoder = new TextEncoder();
 
@@ -25,14 +25,16 @@ interface Capture {
   readonly verdicts: EvidenceVerdict[];
   readonly charts: ChartSpec[];
   readonly tools: string[];
+  readonly evidenceSources: EvidenceSource[];
+  evidenceSource: EvidenceSource | null;
   text: string;
   errors: string[];
 }
 
-async function runWithStub(response: Response, mode: StreamMode = "live"): Promise<{ readonly capture: Capture; readonly request: { url: string; body: string } }> {
+async function runWithStub(response: Response, mode: StreamMode = "live", question = "애플 실적"): Promise<{ readonly capture: Capture; readonly request: { url: string; body: string } }> {
   const originalFetch = globalThis.fetch;
   const request = { url: "", body: "" };
-  const capture: Capture = { order: [], references: [], chunks: [], verdicts: [], charts: [], tools: [], text: "", errors: [] };
+  const capture: Capture = { order: [], references: [], chunks: [], verdicts: [], charts: [], tools: [], evidenceSources: [], evidenceSource: null, text: "", errors: [] };
   const stub: typeof fetch = async (input, init) => {
     request.url = String(input);
     request.body = typeof init?.body === "string" ? init.body : "";
@@ -40,19 +42,23 @@ async function runWithStub(response: Response, mode: StreamMode = "live"): Promi
   };
   globalThis.fetch = stub;
   try {
-    await streamChat([{ role: "user", content: "애플 실적" }], {
+    await streamChat([{ role: "user", content: question }], {
       onStart: () => capture.order.push("start"),
       onTool: (name: ToolName, status) => {
         capture.tools.push(`${name}:${status}`);
         capture.order.push("tool");
       },
+      onEvidenceSource: (source) => { capture.evidenceSources.push(source); capture.evidenceSource = source; },
       onReferences: (items) => capture.references.push(...items),
       onChunks: (items) => capture.chunks.push(...items),
       onVerdicts: (items) => capture.verdicts.push(...items),
       onTextDelta: (delta) => { capture.text += delta; },
       onChart: (chart) => capture.charts.push(chart),
       onFinish: () => capture.order.push("finish"),
-      onError: (error) => capture.errors.push(error.code),
+      onError: (error) => {
+        capture.errors.push(error.code);
+        if (error.code === "liner_provenance_invalid") capture.evidenceSource = null;
+      },
       onDone: () => capture.order.push("done"),
     }, { mode });
   } finally {
@@ -100,6 +106,7 @@ const chartSpec = {
 
 test("drives the live main surface from raw Agents SDK tool and text events", async () => {
   const search = {
+    source: "live",
     sq_id: "sq1",
     references: [{ id: "ref-1", title: "공식 실적", url: "https://example.com/results" }],
     chunks: [{ id: "chunk-1", reference_id: "ref-1", content: "매출은 100입니다." }],
@@ -129,8 +136,181 @@ test("drives the live main surface from raw Agents SDK tool and text events", as
     "judge_evidence:started", "judge_evidence:completed",
     "render_visualization:started", "render_visualization:completed",
   ]);
+  assert.deepEqual(capture.evidenceSources, ["live"]);
   assert.deepEqual(capture.order, ["start", "tool", "tool", "tool", "tool", "tool", "tool", "finish", "done"]);
   assert.deepEqual(capture.errors, []);
+});
+
+for (const [description, output] of [
+  ["missing", { references: [], chunks: [] }],
+  ["unknown", { source: "preview", references: [], chunks: [] }],
+  ["malformed", { source: ["live"], references: [], chunks: [] }],
+] as const) {
+  test(`does not emit LIVE provenance to the main UI when the Liner source is ${description}`, async () => {
+    const stream = [
+      toolCall("search-1", "liner_search"),
+      toolOutput("search-1", "liner_search", output),
+      event({ type: "completion", ok: true }),
+    ];
+
+    const { capture } = await runWithStub(fakeResponse(stream));
+
+    assert.deepEqual(capture.evidenceSources, []);
+  });
+}
+
+test("emits mock provenance from an explicit Liner fallback tool output", async () => {
+  const stream = [
+    toolCall("search-1", "liner_search"),
+    toolOutput("search-1", "liner_search", { source: "mock", references: [], chunks: [] }),
+    event({ type: "completion", ok: true }),
+  ];
+
+  const { capture } = await runWithStub(fakeResponse(stream));
+
+  assert.deepEqual(capture.evidenceSources, ["mock"]);
+});
+
+test("fails closed after a valid Liner source when a later result is missing", async () => {
+  const stream = [
+    toolCall("search-1", "liner_search"),
+    toolOutput("search-1", "liner_search", { source: "live", references: [], chunks: [] }),
+    toolCall("search-2", "liner_search"),
+    event({ type: "completion", ok: true }),
+  ];
+
+  const { capture } = await runWithStub(fakeResponse(stream));
+
+  assert.deepEqual(capture.evidenceSources, ["live"]);
+  assert.equal(capture.evidenceSource, null);
+  assert.deepEqual(capture.errors, ["liner_provenance_invalid"]);
+});
+
+for (const [description, output] of [
+  ["unknown", { source: "preview", references: [], chunks: [] }],
+  ["malformed", { source: ["live"], references: [], chunks: [] }],
+] as const) {
+  test(`fails closed after live provenance when the later Liner result is ${description}`, async () => {
+    const stream = [
+      toolCall("search-1", "liner_search"),
+      toolOutput("search-1", "liner_search", { source: "live", references: [], chunks: [] }),
+      toolOutput("search-1", "liner_search", output),
+      toolOutput("search-2", "liner_search", { source: "live", references: [], chunks: [] }),
+      event({ type: "completion", ok: true }),
+    ];
+
+    const { capture } = await runWithStub(fakeResponse(stream));
+
+    assert.deepEqual(capture.evidenceSources, ["live"]);
+    assert.equal(capture.evidenceSource, null);
+    assert.deepEqual(capture.errors, ["liner_provenance_invalid"]);
+  });
+}
+
+test("rejects a Liner result with a mismatched tool name", async () => {
+  const stream = [
+    toolCall("search-1", "liner_search"),
+    toolOutput("search-1", "judge_evidence", { source: "live", references: [], chunks: [] }),
+    event({ type: "completion", ok: true }),
+  ];
+
+  const { capture } = await runWithStub(fakeResponse(stream));
+
+  assert.deepEqual(capture.evidenceSources, []);
+  assert.equal(capture.evidenceSource, null);
+  assert.deepEqual(capture.errors, ["liner_provenance_invalid"]);
+});
+
+test("ignores provenance-shaped output from another tool in mixed calls", async () => {
+  const stream = [
+    toolCall("search-1", "liner_search"),
+    toolCall("judge-1", "judge_evidence"),
+    toolOutput("judge-1", "judge_evidence", { source: "live", references: [], chunks: [] }),
+    toolOutput("search-1", "liner_search", { source: "live", references: [], chunks: [] }),
+    event({ type: "completion", ok: true }),
+  ];
+
+  const { capture } = await runWithStub(fakeResponse(stream));
+
+  assert.deepEqual(capture.evidenceSources, ["live"]);
+  assert.deepEqual(capture.errors, []);
+});
+
+test("rejects a reused call ID even when a later valid Liner result arrives", async () => {
+  const stream = [
+    toolCall("search-1", "liner_search"),
+    toolCall("search-1", "judge_evidence"),
+    toolOutput("search-1", "judge_evidence", { source: "live", references: [], chunks: [] }),
+    toolCall("search-2", "liner_search"),
+    toolOutput("search-2", "liner_search", { source: "live", references: [], chunks: [] }),
+    event({ type: "completion", ok: true }),
+  ];
+
+  const { capture } = await runWithStub(fakeResponse(stream));
+
+  assert.deepEqual(capture.evidenceSources, []);
+  assert.equal(capture.evidenceSource, null);
+  assert.deepEqual(capture.errors, ["liner_provenance_invalid"]);
+});
+
+test("preserves direct object Liner tool output fixtures", async () => {
+  const stream = [
+    toolCall("search-1", "liner_search"),
+    event({
+      type: "run_item_stream_event",
+      name: "tool_output",
+      item: {
+        type: "tool_call_output_item",
+        rawItem: {
+          type: "function_call_result",
+          callId: "search-1",
+          name: "liner_search",
+          status: "completed",
+          output: { source: "mock", references: [], chunks: [] },
+        },
+      },
+    }),
+    event({ type: "completion", ok: true }),
+  ];
+
+  const { capture } = await runWithStub(fakeResponse(stream));
+
+  assert.deepEqual(capture.evidenceSources, ["mock"]);
+});
+
+test("emits mock provenance from an Agents SDK text output envelope", async () => {
+  const stream = [
+    toolCall("search-1", "liner_search"),
+    event({
+      type: "run_item_stream_event",
+      name: "tool_output",
+      item: {
+        type: "tool_call_output_item",
+        rawItem: {
+          type: "function_call_result",
+          callId: "search-1",
+          name: "liner_search",
+          status: "completed",
+          output: { type: "text", text: JSON.stringify({ source: "mock", references: [], chunks: [] }) },
+        },
+      },
+    }),
+    event({ type: "completion", ok: true }),
+  ];
+
+  const { capture } = await runWithStub(fakeResponse(stream));
+
+  assert.deepEqual(capture.evidenceSources, ["mock"]);
+});
+
+test("maps Liner-specific SSE errors without discarding the stream", async () => {
+  const stream = [
+    event({ type: "error", code: "liner_search_failed", message: "Liner API returned HTTP 502" }),
+    event({ type: "completion", ok: false }),
+  ];
+  const { capture } = await runWithStub(fakeResponse(stream));
+
+  assert.deepEqual(capture.errors, ["liner_search_failed"]);
 });
 
 for (const verdict of ["conflicting", "insufficient", "unsupported"] as const) {

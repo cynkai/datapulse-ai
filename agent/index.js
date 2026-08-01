@@ -2,14 +2,97 @@ import http from 'node:http';
 import { pathToFileURL } from 'node:url';
 
 import { MissingApiKeyError, createAgentRuntime } from './core.js';
+import { LinerApiError } from './tools/liner_search.js';
 
 const MAX_BODY_BYTES = 64 * 1024;
+const MAX_ERROR_CHAIN_DEPTH = 8;
+const MAX_STREAM_EVENT_DEPTH = 12;
 
 class InvalidRequestError extends Error {
   constructor(message) {
     super(message);
     this.name = 'InvalidRequestError';
   }
+}
+
+function hasLinerApiFailure(error) {
+  const errorsToInspect = [error];
+  const inspected = new Set();
+
+  while (errorsToInspect.length > 0 && inspected.size < MAX_ERROR_CHAIN_DEPTH) {
+    const current = errorsToInspect.pop();
+    if (!(current instanceof Error) || inspected.has(current)) continue;
+    inspected.add(current);
+    try {
+      if (current instanceof LinerApiError || current.code === 'liner_api_failed') return true;
+      if (current.error instanceof Error) errorsToInspect.push(current.error);
+      if (current.cause instanceof Error) errorsToInspect.push(current.cause);
+    } catch {
+      continue;
+    }
+  }
+
+  return false;
+}
+
+function streamCallId(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return typeof value.callId === 'string' ? value.callId : typeof value.call_id === 'string' ? value.call_id : null;
+}
+
+function textEnvelope(value) {
+  if (typeof value === 'string') {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value) || value.type !== 'text') return null;
+  return typeof value.text === 'string' ? value.text : null;
+}
+
+function isSerializedLinerApiFailure(value) {
+  const text = textEnvelope(value);
+  if (!text) return false;
+  if (text.startsWith('An error occurred while running the tool. Please try again. Error: LinerApiError:')) return true;
+  try {
+    const serializedError = JSON.parse(text);
+    return serializedError?.name === 'LinerApiError' && serializedError?.code === 'liner_api_failed';
+  } catch {
+    return false;
+  }
+}
+
+function hasLinerApiFailureInStreamEvent(event, linerCallIds) {
+  const valuesToInspect = [{ value: event, depth: 0 }];
+  const inspected = new Set();
+
+  while (valuesToInspect.length > 0) {
+    const { value, depth } = valuesToInspect.pop();
+    if (!value || typeof value !== 'object' || inspected.has(value) || depth > MAX_STREAM_EVENT_DEPTH) continue;
+    inspected.add(value);
+    let type;
+    try {
+      type = value.type;
+      if (type === 'function_call' && value.name === 'liner_search') {
+        const callId = streamCallId(value);
+        if (callId) linerCallIds.add(callId);
+      }
+      if (type === 'function_call_result' || type === 'function_call_output') {
+        const callId = streamCallId(value);
+        const isLinerCall = value.name === 'liner_search' || (callId !== null && linerCallIds.has(callId));
+        if (isLinerCall && isSerializedLinerApiFailure(value.output)) return true;
+      }
+      if (depth < MAX_STREAM_EVENT_DEPTH) {
+        for (const child of Object.values(value)) valuesToInspect.push({ value: child, depth: depth + 1 });
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return false;
 }
 
 async function parseQuestion(request) {
@@ -47,6 +130,7 @@ function startSse(response) {
     'cache-control': 'no-cache',
     connection: 'keep-alive',
   });
+  response.write(': connected\n\n');
 }
 
 function sendSse(response, event) {
@@ -68,14 +152,21 @@ async function handleRun(request, response, runtime) {
   startSse(response);
   try {
     const stream = await runtime.streamQuestion(question);
-    for await (const event of stream) sendSse(response, event);
+    const linerCallIds = new Set();
+    for await (const event of stream) {
+      if (hasLinerApiFailureInStreamEvent(event, linerCallIds)) {
+        throw new LinerApiError('Liner tool output reported a failure.');
+      }
+      sendSse(response, event);
+    }
     sendSse(response, { type: 'completion', ok: true, final_output: stream.finalOutput ?? null });
   } catch (error) {
     const missingKey = error instanceof MissingApiKeyError;
+    const linerFailure = hasLinerApiFailure(error);
     sendSse(response, {
       type: 'error',
-      code: missingKey ? error.code : 'agent_run_failed',
-      message: missingKey ? error.message : 'Agent run failed.',
+      code: missingKey ? error.code : linerFailure ? 'liner_api_failed' : 'agent_run_failed',
+      message: missingKey ? error.message : linerFailure ? 'Liner search failed.' : 'Agent run failed.',
     });
     sendSse(response, { type: 'completion', ok: false });
   }

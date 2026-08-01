@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { Reference, ReferenceChunk } from "@/lib/sse";
+import { isSafeCitationUrl } from "@/lib/citation-url";
 import { CloseIcon, ExternalLinkIcon, GlobeIcon, SearchIcon } from "./icons";
 
 export interface CitationListProps {
@@ -11,10 +12,12 @@ export interface CitationListProps {
 
 function Favicon({ reference }: { reference: Reference }) {
   const [errored, setErrored] = useState(false);
-  const src =
-    reference.faviconUrl && reference.faviconUrl.length > 0
-      ? reference.faviconUrl
-      : `https://www.google.com/s2/favicons?domain=${encodeURIComponent(reference.hostname)}&sz=64`;
+  const sourceUrl = isSafeCitationUrl(reference.url) ? new URL(reference.url) : null;
+  const fallback = sourceUrl
+    ? `https://www.google.com/s2/favicons?domain=${encodeURIComponent(sourceUrl.hostname)}&sz=64`
+    : undefined;
+  const candidate = reference.faviconUrl?.trim();
+  const src = candidate && isSafeCitationUrl(candidate) ? candidate : fallback;
 
   if (errored || !src) {
     return (
@@ -125,14 +128,18 @@ export default function CitationList({ references, chunks }: CitationListProps) 
                 <article key={reference.url} className="mb-4 rounded-xl border border-edge bg-ink-800/60 p-3">
                   <div className="flex items-start gap-2">
                     <Favicon reference={reference} />
-                    <a
-                      href={reference.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="min-w-0 text-[13px] font-medium leading-snug text-frost-200 hover:text-pulse-300"
-                    >
-                      {reference.title}
-                    </a>
+                    {isSafeCitationUrl(reference.url) ? (
+                      <a
+                        href={reference.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="min-w-0 text-[13px] font-medium leading-snug text-frost-200 hover:text-pulse-300"
+                      >
+                        {reference.title}
+                      </a>
+                    ) : (
+                      <span className="min-w-0 text-[13px] font-medium leading-snug text-frost-200">{reference.title}</span>
+                    )}
                   </div>
                   {reference.description && (
                     <p className="mt-1.5 text-[12px] leading-relaxed text-frost-500">{reference.description}</p>
@@ -157,15 +164,17 @@ export default function CitationList({ references, chunks }: CitationListProps) 
                         <span className="truncate text-[12px] font-medium text-frost-200">{chunk.sourceTitle}</span>
                       </div>
                       <p className="mt-2 line-clamp-3 text-[12px] leading-relaxed text-frost-400">{chunk.content}</p>
-                      <a
-                        href={chunk.sourceUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="mt-2 inline-flex items-center gap-1 text-[11px] text-glow-300 hover:text-glow-400"
-                      >
-                        원문 보기
-                        <ExternalLinkIcon className="size-3" />
-                      </a>
+                      {isSafeCitationUrl(chunk.sourceUrl) && (
+                        <a
+                          href={chunk.sourceUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-2 inline-flex items-center gap-1 text-[11px] text-glow-300 hover:text-glow-400"
+                        >
+                          원문 보기
+                          <ExternalLinkIcon className="size-3" />
+                        </a>
+                      )}
                     </li>
                   ))}
                 </ol>

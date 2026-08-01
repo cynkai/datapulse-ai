@@ -19,7 +19,6 @@ export async function POST(request: Request): Promise<Response> {
       },
       body: await request.text(),
       cache: "no-store",
-      signal: request.signal,
     });
   } catch (cause) {
     if (request.signal.aborted) throw cause;
@@ -32,6 +31,7 @@ export async function POST(request: Request): Promise<Response> {
     headers: {
       "Cache-Control": upstream.headers.get("cache-control") ?? "no-store",
       "Content-Type": upstream.headers.get("content-type") ?? "application/json; charset=utf-8",
+      "X-Accel-Buffering": "no",
     },
   });
 }

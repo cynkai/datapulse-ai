@@ -26,16 +26,14 @@ export function upstreamUrl(baseUrl) {
  * Resolves with:
  *   { streamed: true }            - upstream 2xx streamed to the client
  *   { aborted: true }             - client disconnected, nothing to do
- *   { status, body, contentType } - upstream returned a non-2xx status
+ *   { upstreamError: true, status } - upstream returned a non-2xx status
  *
  * Throws on network/abort errors before the response starts streaming.
  */
 export async function streamVisualAnswer({ messages, apiKey, baseUrl, res }) {
   const controller = new AbortController();
-  let timedOut = false;
 
   const timer = setTimeout(() => {
-    timedOut = true;
     controller.abort();
   }, UPSTREAM_TIMEOUT_MS);
 
@@ -55,11 +53,9 @@ export async function streamVisualAnswer({ messages, apiKey, baseUrl, res }) {
     });
 
     if (!upstream.ok || !upstream.body) {
-      return {
-        status: upstream.status,
-        body: await upstream.text(),
-        contentType: upstream.headers.get('content-type') || 'application/json',
-      };
+      const diagnostic = await upstream.text();
+      console.error(`[server] upstream response status=${upstream.status}: ${diagnostic}`);
+      return { upstreamError: true, status: upstream.status };
     }
 
     res.status(upstream.status);
@@ -76,7 +72,6 @@ export async function streamVisualAnswer({ messages, apiKey, baseUrl, res }) {
     if (res.destroyed || res.writableEnded) {
       return { aborted: true }; // client went away - nothing more to send
     }
-    err.timeout = timedOut;
     throw err;
   } finally {
     clearTimeout(timer);

@@ -5,6 +5,8 @@ import { EventTimeline } from "@/components/EventTimeline";
 import { ArrowUpIcon, PulseIcon, SpinnerIcon } from "@/components/icons";
 import { streamAgentRun, type AgentEvent } from "@/lib/agent-events";
 import { nextStateForEvent, type ConnectionState } from "@/lib/run-state";
+import { evidenceTrustLabel, linerFailureMessage } from "@/lib/trust-signals";
+import { linerEvidenceSourceFromEvents } from "@/lib/agent-events";
 
 const STATUS: Record<ConnectionState, { readonly label: string; readonly color: string }> = {
   idle: { label: "연결 대기", color: "bg-frost-500 text-frost-400" },
@@ -12,6 +14,7 @@ const STATUS: Record<ConnectionState, { readonly label: string; readonly color: 
   streaming: { label: "이벤트 수신 중", color: "bg-glow-400 text-glow-300" },
   complete: { label: "실행 완료", color: "bg-mint-400 text-mint-400" },
   error: { label: "실행 오류", color: "bg-coral-400 text-coral-400" },
+  liner_error: { label: "Liner 연결 실패", color: "bg-coral-400 text-coral-400" },
   cancelled: { label: "실행 취소됨", color: "bg-amber-400 text-amber-400" },
 };
 
@@ -26,6 +29,7 @@ export function SecondScreen() {
   const controllerRef = useRef<AbortController | null>(null);
   const runIdRef = useRef(0);
   const status = STATUS[state];
+  const evidenceSource = linerEvidenceSourceFromEvents(events);
 
   useEffect(() => () => controllerRef.current?.abort(), []);
   useEffect(() => {
@@ -61,7 +65,7 @@ export function SecondScreen() {
             receivedCompletion = true;
           }
           if (event.kind === "error") {
-            setError(event.message);
+            setError(linerFailureMessage({ code: event.code ?? "agent_run_failed", message: event.message }));
           }
           setState((previous) => nextStateForEvent(previous, event));
         },
@@ -105,6 +109,11 @@ export function SecondScreen() {
             <span className={`size-2 rounded-full ${status.color.split(" ")[0]} ${running ? "animate-pulse-soft motion-reduce:animate-none" : ""}`} aria-hidden="true" />
             <span className={status.color.split(" ")[1]}>{status.label}</span>
           </output>
+          {evidenceSource !== null && (
+            <output data-testid="evidence-source" aria-label="근거 출처" className={`rounded-full border px-3 py-1.5 font-mono text-[11px] ${evidenceSource === "mock" ? "border-amber-400/30 bg-amber-400/10 text-amber-400" : "border-mint-400/30 bg-mint-400/10 text-mint-400"}`}>
+              {evidenceTrustLabel(evidenceSource)}
+            </output>
+          )}
         </header>
 
         <div className="grid min-w-0 min-h-0 flex-1 gap-5 py-5 lg:grid-cols-[minmax(0,1fr)_minmax(300px,420px)]">

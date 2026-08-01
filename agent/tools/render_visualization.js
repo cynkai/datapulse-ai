@@ -17,7 +17,14 @@ export function renderChartSpec(input) {
 
 export const renderVisualizationTool = tool({
   name: 'render_visualization',
-  description: '모든 필수 명제가 supported일 때만 프론트엔드용 chart-spec JSON을 반환한다.',
+  description: 'effective plan에 시각화가 필요하고 모든 필수 명제가 supported일 때만 프론트엔드용 chart-spec JSON을 반환한다.',
   parameters: visualizationInputSchema,
-  execute: renderChartSpec,
+  execute: async (input, runContext) => {
+    const dependencyState = runContext?.context?.dependencyState;
+    if (!dependencyState) {
+      throw new Error('render_visualization requires run dependency state');
+    }
+    if (dependencyState.needsVisualization() !== true) return null;
+    return renderChartSpec(input);
+  },
 });

@@ -1,3 +1,5 @@
+import { decodeAgentsSdkToolOutput, evidenceSourceFromLinerOutput, isLinerSearchFailure } from "./trust-signals.ts";
+
 export type JsonValue = boolean | null | number | string | JsonValue[] | { readonly [key: string]: JsonValue };
 
 type JsonRecord = { readonly [key: string]: JsonValue };
@@ -11,7 +13,7 @@ export interface ToolEvent {
 export type AgentEvent =
   | { readonly kind: "event"; readonly raw: JsonValue; readonly rawJson: string; readonly tool: ToolEvent | null }
   | { readonly kind: "completion"; readonly ok: boolean; readonly raw: JsonValue; readonly rawJson: string }
-  | { readonly kind: "error"; readonly message: string; readonly raw: JsonValue; readonly rawJson: string }
+  | { readonly kind: "error"; readonly code?: string; readonly message: string; readonly raw: JsonValue; readonly rawJson: string }
   | { readonly kind: "malformed"; readonly raw: string };
 
 export interface AgentEventParserOptions {
@@ -35,9 +37,7 @@ export class AgentStreamError extends Error {
 }
 
 function isJsonValue(value: unknown): value is JsonValue {
-  if (value === null || typeof value === "boolean" || typeof value === "number" || typeof value === "string") {
-    return true;
-  }
+  if (value === null || typeof value === "boolean" || typeof value === "number" || typeof value === "string") return true;
   if (Array.isArray(value)) return value.every(isJsonValue);
   if (typeof value !== "object") return false;
   return Object.values(value).every(isJsonValue);
@@ -55,7 +55,7 @@ function stringValue(record: JsonRecord, key: string): string | null {
 function eventTool(value: JsonValue): ToolEvent | null {
   if (!isRecord(value)) return null;
   const type = stringValue(value, "type");
-  if (type === "function_call" || type === "function_call_output") {
+  if (type === "function_call" || type === "function_call_output" || type === "function_call_result") {
     const callId = stringValue(value, "call_id") ?? stringValue(value, "callId");
     if (callId !== null) {
       return {
@@ -80,12 +80,64 @@ function parsedEvent(value: JsonValue, rawJson: string): AgentEvent {
   if (stringValue(value, "type") === "error") {
     return {
       kind: "error",
+      code: stringValue(value, "code") ?? undefined,
       message: stringValue(value, "message") ?? "에이전트 실행 중 오류가 발생했습니다.",
       raw: value,
       rawJson,
     };
   }
   return { kind: "event", raw: value, rawJson, tool: eventTool(value) };
+}
+
+function resultOutput(value: JsonValue, callId: string): JsonValue | null {
+  if (!isRecord(value)) return null;
+  const type = stringValue(value, "type");
+  if (type === "function_call_result" || type === "function_call_output") {
+    const resultCallId = stringValue(value, "call_id") ?? stringValue(value, "callId");
+    return resultCallId === callId ? decodeAgentsSdkToolOutput(value.output) : null;
+  }
+  for (const child of Object.values(value)) {
+    const found = resultOutput(child, callId);
+    if (found !== null) return found;
+  }
+  return null;
+}
+
+export function linerEvidenceSourceFromEvents(events: readonly AgentEvent[]): "live" | "mock" | null {
+  const calls = new Map<string, { readonly name: string | null; readonly resultCount: number; readonly source: "live" | "mock" | null }>();
+  const callNames = new Map<string, string | null>();
+  let invalid = false;
+
+  for (const event of events) {
+    if (event.kind === "error") {
+      if (isLinerSearchFailure({ code: event.code ?? "", message: event.message })) invalid = true;
+      continue;
+    }
+    if (event.kind !== "event" || event.tool === null) continue;
+    if (event.tool.kind === "tool_call") {
+      if (callNames.has(event.tool.callId)) invalid = true;
+      callNames.set(event.tool.callId, event.tool.name);
+      if (event.tool.name === "liner_search") calls.set(event.tool.callId, { name: event.tool.name, resultCount: 0, source: null });
+      continue;
+    }
+    if (event.tool.kind !== "tool_result") continue;
+    const call = calls.get(event.tool.callId);
+    if (call === undefined) continue;
+    if (event.tool.name !== null && event.tool.name !== call.name) {
+      invalid = true;
+      continue;
+    }
+    const output = resultOutput(event.raw, event.tool.callId);
+    const source = evidenceSourceFromLinerOutput(output);
+    if (call.resultCount > 0 || source === null) {
+      invalid = true;
+      continue;
+    }
+    calls.set(event.tool.callId, { ...call, resultCount: 1, source });
+  }
+
+  if (invalid || [...calls.values()].some((call) => call.resultCount !== 1 || call.source === null)) return null;
+  return [...calls.values()].some((call) => call.source === "mock") ? "mock" : calls.size > 0 ? "live" : null;
 }
 
 export function agentRunUrl(): string {
