@@ -1,6 +1,6 @@
 # DataPulse AI
 
-> A research agent that judges its evidence before it concludes: plan → search → judge each claim → answer → chart only when every claim is supported.
+> A research agent that does not answer without evidence. It searches, judges each claim against the sources, and shows an answer and a chart only when every claim is supported.
 
 🇰🇷 [한국어 README](README.ko.md)
 
@@ -51,18 +51,14 @@ Leave the toggle on **실시간** (live). The web app relays the question to the
 
 ### What a live run looks like
 
-Checked on 2026-10-04 with the demo question "애플 vs 마이크로소프트 2025 실적 비교" (gpt-5.4-mini judge, about 35–60 s per run).
-Three runs after the fixes below gave three different outcomes; in each, a chart appeared only when every claim was `supported`:
+Checked on 2026-10-04 with the demo question "애플 vs 마이크로소프트 2025 실적 비교" (gpt-5.4-mini judge, about 45–50 s per run).
+In all three runs with the answer gate the judge found fewer than two independent direct sources for at least one claim,
+so the UI withheld the model's answer and listed the claims it could not verify:
 
-| Run | Verdicts | Result |
-|---|---|---|
-| 1 | both revenue claims `supported` | answer with Apple $416.2B vs Microsoft $281.7B (FY2025) and a bar chart |
-| 2 | one claim `conflicting` | answer flagged as not fully verified, no chart |
-| 3 | claims `insufficient` (the planner phrased them vaguely) | no comparison, no chart |
+![Live run where the answer was withheld](docs/images/live-withheld.png)
 
-![Live run that stopped at insufficient evidence](docs/images/live-insufficient.png)
-
-The agent is only as steady as the model planning and judging it; expect the same question to land differently between runs.
+Before the gate, one of three runs had every claim `supported` and answered with Apple $416.2B vs Microsoft $281.7B (FY2025) and a chart;
+of the other two, one still stated numbers with only a caveat and one declined on its own. The judge is a model, so the same question can land differently between runs.
 
 > **Run it locally.** The agent has no authentication or rate limit. Deployed publicly with your keys, anyone could spend them.
 
@@ -75,8 +71,13 @@ The agent (OpenAI Agents SDK, `agent/`) follows a fixed order and has one tool p
 2. **Gather** (`liner_search`): search Liner for each sub-question, in `scholar` or `general` mode.
 3. **Judge** (`judge_evidence`): pick the most relevant chunks per claim and ask a model whether each chunk supports or conflicts with it.
    Every claim gets one verdict: `supported`, `conflicting`, `insufficient`, `unsupported` or `not_atomic`.
-4. **Conclude:** answer from the verdicts and evidence only, saying plainly when something could not be decided.
+4. **Conclude:** the model writes an answer from the verdicts and evidence.
 5. **Visualize** (`render_visualization`): draw a chart only when every required claim is `supported`.
+
+The rule is enforced in code, not left to the prompt. In live mode the web app holds the answer text until the run ends and shows it
+only if the run judged at least one claim and every judged claim is `supported`; otherwise it shows
+"근거가 충분하지 않아 답변을 보류합니다" with each unverified claim, its verdict and the judge's reason. Charts follow the same rule.
+The agent's own `/api/run` stream is unfiltered, so other clients must apply the rule themselves.
 
 Search results are treated as untrusted data, not instructions. Every piece of evidence carries its provenance (`live` or `mock`),
 and the UI shows which one the answer used.
@@ -110,6 +111,8 @@ npm run build   # production build of the web app
   for a reused call ID, so every real run showed "Liner 연결 실패" and no sources; and the planner wrote long keyword lists as search queries,
   for which Liner returns references but no text, so every claim came out `insufficient`. Sources from all searches are now listed, not just the last.
 - Removed two unpinned debugging scripts that the dev server loaded from unpkg.
+- The "no answer without evidence" rule is now enforced in the UI: the model's answer is withheld unless every judged claim is supported
+  (before, only the chart was blocked and the answer text depended on the model). A later all-supported judge call can no longer re-enable a blocked chart.
 
 ## License
 

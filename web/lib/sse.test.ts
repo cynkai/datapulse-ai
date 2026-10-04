@@ -376,3 +376,82 @@ test("reports connection failures and completes exactly once", async () => {
   assert.deepEqual(capture.errors, ["HTTP_503"]);
   assert.deepEqual(capture.order, ["done"]);
 });
+
+// The project's rule: no answer without judged evidence.
+const liveSearch = {
+  source: "live",
+  sq_id: "sq1",
+  references: [{ id: "ref-1", title: "공식 실적", url: "https://example.com/results" }],
+  chunks: [{ id: "chunk-1", reference_id: "ref-1", content: "매출은 100입니다." }],
+};
+const insufficientVerdict = { ...supportedVerdict, claim: "Microsoft FY2025 revenue was 281.7B USD.", verdict: "insufficient", reason: "직접 근거가 부족합니다." };
+const modelAnswer = event({ type: "raw_model_stream_event", data: { type: "output_text_delta", delta: "애플이 더 큽니다: 416.2B vs 281.7B." } });
+
+test("withholds the model's answer when a judged claim is not supported", async () => {
+  const stream = [
+    toolCall("search-1", "liner_search"),
+    toolOutput("search-1", "liner_search", liveSearch),
+    toolCall("judge-1", "judge_evidence"),
+    toolOutput("judge-1", "judge_evidence", [supportedVerdict, insufficientVerdict]),
+    modelAnswer,
+    event({ type: "completion", ok: true, final_output: "애플이 더 큽니다: 416.2B vs 281.7B." }),
+  ];
+
+  const { capture } = await runWithStub(fakeResponse(stream));
+
+  assert.doesNotMatch(capture.text, /애플이 더 큽니다/);
+  assert.match(capture.text, /^근거가 충분하지 않아 답변을 보류합니다/);
+  assert.match(capture.text, /Microsoft FY2025 revenue was 281\.7B USD\. → insufficient: 직접 근거가 부족합니다\./);
+  assert.doesNotMatch(capture.text, new RegExp(supportedVerdict.claim.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.deepEqual(capture.errors, []);
+});
+
+test("withholds the answer when the run never judged any evidence", async () => {
+  const stream = [
+    toolCall("search-1", "liner_search"),
+    toolOutput("search-1", "liner_search", liveSearch),
+    modelAnswer,
+    event({ type: "completion", ok: true }),
+  ];
+
+  const { capture } = await runWithStub(fakeResponse(stream));
+
+  assert.match(capture.text, /^근거 판정을 거치지 않아 답변을 보류합니다/);
+});
+
+test("a later all-supported judge call does not re-enable the chart or the answer", async () => {
+  const stream = [
+    toolCall("search-1", "liner_search"),
+    toolOutput("search-1", "liner_search", liveSearch),
+    toolCall("judge-1", "judge_evidence"),
+    toolOutput("judge-1", "judge_evidence", [insufficientVerdict]),
+    toolCall("judge-2", "judge_evidence"),
+    toolOutput("judge-2", "judge_evidence", [supportedVerdict]),
+    toolCall("chart-1", "render_visualization"),
+    toolOutput("chart-1", "render_visualization", chartSpec),
+    modelAnswer,
+    event({ type: "completion", ok: true }),
+  ];
+
+  const { capture } = await runWithStub(fakeResponse(stream));
+
+  assert.deepEqual(capture.charts, []);
+  assert.match(capture.text, /^근거가 충분하지 않아 답변을 보류합니다/);
+});
+
+test("shows no answer text when the run fails", async () => {
+  const stream = [
+    toolCall("search-1", "liner_search"),
+    toolOutput("search-1", "liner_search", liveSearch),
+    toolCall("judge-1", "judge_evidence"),
+    toolOutput("judge-1", "judge_evidence", [supportedVerdict]),
+    modelAnswer,
+    event({ type: "error", code: "agent_run_failed", message: "Agent run failed." }),
+    event({ type: "completion", ok: false }),
+  ];
+
+  const { capture } = await runWithStub(fakeResponse(stream));
+
+  assert.equal(capture.text, "");
+  assert.deepEqual(capture.errors, ["agent_run_failed"]);
+});

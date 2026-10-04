@@ -195,11 +195,30 @@ function mockChartFrom(html: string): ChartSpec | null {
   return { type: "bar", title: cfg.title, xAxis: "기간", yAxis: typeof cfg.unit === "string" ? cfg.unit : "값", series };
 }
 
+// The project's rule: no answer without judged evidence. In live mode the
+// model's answer text is held until the run ends and shown only when every
+// judged claim is supported; otherwise this notice replaces it.
+export function withheldAnswer(verdicts: readonly EvidenceVerdict[]): string | null {
+  if (verdicts.length === 0) {
+    return "근거 판정을 거치지 않아 답변을 보류합니다. 이 에이전트는 판정을 통과한 근거가 있을 때만 답합니다.";
+  }
+  const blocked = verdicts.filter((item) => item.verdict !== "supported");
+  if (blocked.length === 0) return null;
+  return [
+    "근거가 충분하지 않아 답변을 보류합니다. 검증하지 못한 명제:",
+    "",
+    ...blocked.map((item) => `- ${item.claim} → ${item.verdict}: ${item.reason}`),
+  ].join("\n");
+}
+
 export function createStreamPayloadParser(handlers: StreamChatHandlers, mode: StreamMode) {
   const calls = new Map<string, { readonly name: ToolName | null; readonly resultSeen: boolean; readonly invalid: boolean }>();
   let references = new Map<string, Reference>();
   let chartAllowed = mode === "mock";
   let emittedText = false;
+  const gateAnswer = mode !== "mock";
+  let heldText = "";
+  const judged: EvidenceVerdict[] = [];
   let pendingError: { readonly code: string; readonly message: string } | null = null;
   let linerProvenanceInvalid = false;
   let finished = false;
@@ -229,7 +248,9 @@ export function createStreamPayloadParser(handlers: StreamChatHandlers, mode: St
     if (name === "judge_evidence") {
       const verdicts = verdictsFrom(output);
       if (verdicts !== null) {
-        chartAllowed = verdicts.every((item) => item.verdict === "supported");
+        // Gate on every verdict in the run, not just the latest judge call.
+        judged.push(...verdicts);
+        chartAllowed = judged.every((item) => item.verdict === "supported");
         handlers.onVerdicts?.(verdicts);
       }
     }
@@ -260,7 +281,8 @@ export function createStreamPayloadParser(handlers: StreamChatHandlers, mode: St
       return;
     }
     if (event.kind === "completion") {
-      if (isRecord(event.raw) && !emittedText && typeof event.raw.final_output === "string") handlers.onTextDelta?.(event.raw.final_output);
+      const finalOutput = isRecord(event.raw) && typeof event.raw.final_output === "string" ? event.raw.final_output : null;
+      if (!gateAnswer && !emittedText && finalOutput !== null) handlers.onTextDelta?.(finalOutput);
       if (event.ok) {
         // A clean completion must not erase a provenance failure: check the
         // Liner calls first and fail closed if any result was missing or bad.
@@ -272,6 +294,10 @@ export function createStreamPayloadParser(handlers: StreamChatHandlers, mode: St
           return;
         }
         pendingError = null;
+        if (gateAnswer) {
+          const answer = emittedText ? heldText : finalOutput ?? "";
+          handlers.onTextDelta?.(withheldAnswer(judged) ?? answer);
+        }
         finish();
       } else {
         const error = pendingError ?? { code: "agent_run_failed", message: "에이전트 실행에 실패했습니다." };
@@ -288,7 +314,8 @@ export function createStreamPayloadParser(handlers: StreamChatHandlers, mode: St
     const delta = stringField(event.raw, "delta") ?? stringField(data, "delta");
     if ((topType === "text-delta" || dataType === "output_text_delta" || dataType === "response.output_text.delta") && delta !== null) {
       emittedText = true;
-      handlers.onTextDelta?.(delta);
+      if (gateAnswer) heldText += delta;
+      else handlers.onTextDelta?.(delta);
     }
     if (topType === "finish") finish();
     if (topType === "data-error") {
