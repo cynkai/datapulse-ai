@@ -13,7 +13,7 @@
 
 ## 빠른 시작: 오프라인 데모 (키 없음)
 
-Node.js 20.12 이상이 필요합니다.
+Node.js 22 이상이 필요합니다.
 
 ```bash
 git clone https://github.com/cynkai/datapulse-ai.git
@@ -71,8 +71,24 @@ web/     Next.js UI. /api/agent-run이 에이전트로 전달
 mock/    오프라인 데모와 테스트용 Liner API 로컬 mock
 ```
 
+## 개발
+
+```bash
+npm test        # 에이전트·웹 단위 테스트 (키나 네트워크 필요 없음)
+npm run lint
+npm run build   # 웹 앱 프로덕션 빌드
+```
+
 ## 해커톤 이후 변경 사항
 
 - UI가 더 이상 쓰지 않던 초기 Liner 프록시 `server/`와 create-next-app 기본 README를 지웠습니다.
 - 루트에서 `npm install` 한 번으로 전부 설치됩니다(npm workspaces). 에이전트가 `agent/.env`를 읽습니다.
 - README를 코드에 맞게 다시 썼습니다.
+- 제출 당시 실패하던 테스트 13개를 고쳤습니다. 6개는 에이전트가 처음 보내는 SSE 주석을 테스트 파서가 건너뛰기만 하면 됐고,
+  웹 쪽은 실제 버그 두 개를 드러냈습니다. 실행이 `ok: true`로 끝나면 대기 중이던 Liner 출처 오류가 지워져서, 검색 결과가 없거나
+  출처를 알 수 없는 답변도 실시간 결과처럼 끝났습니다. 또 브라우저를 닫아도 에이전트 실행이 멈추지 않았습니다.
+- GitHub Actions CI와 MIT 라이선스를 추가했습니다.
+
+## 라이선스
+
+[MIT](LICENSE)

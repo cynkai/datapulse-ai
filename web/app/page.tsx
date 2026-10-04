@@ -96,7 +96,7 @@ export default function Page() {
         setProgress((previous) => ({ ...previous, current: -1 }));
         break;
     }
-  }, [linerFailed]);
+  }, []);
 
   const pill = linerFailed ? { ...STATUS_PILL.error, label: "Liner 연결 실패" } : STATUS_PILL[phase];
 

@@ -262,6 +262,15 @@ export function createStreamPayloadParser(handlers: StreamChatHandlers, mode: St
     if (event.kind === "completion") {
       if (isRecord(event.raw) && !emittedText && typeof event.raw.final_output === "string") handlers.onTextDelta?.(event.raw.final_output);
       if (event.ok) {
+        // A clean completion must not erase a provenance failure: check the
+        // Liner calls first and fail closed if any result was missing or bad.
+        validateLinerProvenance();
+        if (linerProvenanceInvalid) {
+          const error = pendingError ?? { code: "liner_provenance_invalid", message: "Liner provenance result is invalid." };
+          pendingError = null;
+          handlers.onError?.(error);
+          return;
+        }
         pendingError = null;
         finish();
       } else {
