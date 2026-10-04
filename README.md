@@ -14,7 +14,7 @@ It is kept as a record of the project. Searching needs a [Liner](https://getline
 
 ## Quick start: offline demo (no keys)
 
-Requires Node.js 20.12 or later.
+Requires Node.js 22 or later.
 
 ```bash
 git clone https://github.com/cynkai/datapulse-ai.git
@@ -72,8 +72,24 @@ web/     Next.js UI; /api/agent-run relays to the agent
 mock/    local mock of the Liner API for the offline demo and tests
 ```
 
+## Development
+
+```bash
+npm test        # agent and web unit tests (no keys or network needed)
+npm run lint
+npm run build   # production build of the web app
+```
+
 ## Changes since the hackathon
 
 - Removed `server/`, an earlier Liner proxy the UI no longer used, and the create-next-app README.
 - One `npm install` at the root now installs everything (npm workspaces); the agent reads `agent/.env`.
 - README rewritten to match the code.
+- Fixed the 13 tests that failed at submission. Six only needed the test parser to skip the SSE comment the agent sends first;
+  the web ones exposed two real bugs: a run that ended with `ok: true` erased a pending Liner provenance error, so an answer whose search
+  result was missing or unknown still finished as if it were live; and closing the browser did not stop the agent run.
+- Added GitHub Actions CI and the MIT license.
+
+## License
+
+[MIT](LICENSE)

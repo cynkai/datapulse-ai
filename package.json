@@ -13,9 +13,11 @@
     "dev:web": "npm --workspace web run dev",
     "dev:mock": "npm --workspace mock start",
     "build": "npm --workspace web run build",
-    "test": "npm --workspace agent test && npm --workspace web test"
+    "test": "npm --workspace agent test && npm --workspace web test",
+    "lint": "npm --workspace web run lint"
   },
   "engines": {
-    "node": ">=20.12"
-  }
+    "node": ">=22"
+  },
+  "license": "MIT"
 }

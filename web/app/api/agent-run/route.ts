@@ -19,6 +19,8 @@ export async function POST(request: Request): Promise<Response> {
       },
       body: await request.text(),
       cache: "no-store",
+      // Stop the agent run (and its paid API calls) when the browser goes away.
+      signal: request.signal,
     });
   } catch (cause) {
     if (request.signal.aborted) throw cause;
