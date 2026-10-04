@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "@openai/agents": "0.14.1",
-    "zod": "4.4.3"
+    "zod": "4.4.3",
+    "openai": "6.49.0"
   },
   "engines": {
     "node": ">=20"
