@@ -103,10 +103,9 @@ test('liner SSE normalizer treats standard and compact data framing identically'
 });
 
 test('liner SSE normalizer extracts non-empty evidence from the captured live compact payload', async () => {
-  const rawSse = await readFile(
-    new URL('../../.omo/evidence/datapulse-ai-follow-up/live-e2e/retry-2/raw-liner.sse', import.meta.url),
-    'utf8',
-  );
+  // Same event structure and counts as a real Liner capture from the
+  // hackathon; titles, URLs and text are replaced with synthetic values.
+  const rawSse = await readFile(new URL('./fixtures/liner-search-compact.sse', import.meta.url), 'utf8');
 
   const evidence = normalizeLinerSearchSse(rawSse, 'sq-real-capture');
 
