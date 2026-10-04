@@ -236,6 +236,25 @@ test("ignores provenance-shaped output from another tool in mixed calls", async 
   assert.deepEqual(capture.errors, []);
 });
 
+test("accepts the same call reported several times, as the Agents SDK streams it", async () => {
+  // A real run reports each function_call in the model stream items, the
+  // completed response and the run item before its output arrives.
+  const stream = [
+    toolCall("search-1", "liner_search"),
+    toolCall("search-1", "liner_search"),
+    toolCall("search-1", "liner_search"),
+    toolOutput("search-1", "liner_search", { source: "live", references: [], chunks: [] }),
+    event({ type: "completion", ok: true }),
+  ];
+
+  const { capture } = await runWithStub(fakeResponse(stream));
+
+  assert.deepEqual(capture.evidenceSources, ["live"]);
+  assert.equal(capture.evidenceSource, "live");
+  assert.deepEqual(capture.errors, []);
+  assert.deepEqual(capture.tools, ["liner_search:started", "liner_search:completed"]);
+});
+
 test("rejects a reused call ID even when a later valid Liner result arrives", async () => {
   const stream = [
     toolCall("search-1", "liner_search"),

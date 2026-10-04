@@ -115,7 +115,12 @@ export function linerEvidenceSourceFromEvents(events: readonly AgentEvent[]): "l
     }
     if (event.kind !== "event" || event.tool === null) continue;
     if (event.tool.kind === "tool_call") {
-      if (callNames.has(event.tool.callId)) invalid = true;
+      // A repeated report of the same call (same ID and name) is normal SDK
+      // output; the same ID under another tool name is a reuse.
+      if (callNames.has(event.tool.callId)) {
+        if (callNames.get(event.tool.callId) !== event.tool.name) invalid = true;
+        continue;
+      }
       callNames.set(event.tool.callId, event.tool.name);
       if (event.tool.name === "liner_search") calls.set(event.tool.callId, { name: event.tool.name, resultCount: 0, source: null });
       continue;
