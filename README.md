@@ -28,6 +28,8 @@ Open http://localhost:3000, switch the toggle in the top right to **오프라인
 Offline mode replays canned answers from `mock/` straight to the browser. The numbers in it are sample data, not research results,
 and the agent below is not involved.
 
+![Offline demo](docs/images/offline-demo.png)
+
 ## Live mode (OpenAI + Liner keys)
 
 ```bash
@@ -46,6 +48,21 @@ Leave the toggle on **실시간** (live). The web app relays the question to the
 | `LINER_BASE_URL` | `https://platform.liner.com` | Liner API base URL |
 | `ALLOW_MOCK_FALLBACK` | (off) | `true` = use the local mock when a live Liner call fails; results are labelled `mock` |
 | `PORT` | `4000` | Agent port (the web app reads `AGENT_API_BASE`, default `http://localhost:4000`) |
+
+### What a live run looks like
+
+Checked on 2026-10-04 with the demo question "애플 vs 마이크로소프트 2025 실적 비교" (gpt-5.4-mini judge, about 35–60 s per run).
+Three runs after the fixes below gave three different outcomes; in each, a chart appeared only when every claim was `supported`:
+
+| Run | Verdicts | Result |
+|---|---|---|
+| 1 | both revenue claims `supported` | answer with Apple $416.2B vs Microsoft $281.7B (FY2025) and a bar chart |
+| 2 | one claim `conflicting` | answer flagged as not fully verified, no chart |
+| 3 | claims `insufficient` (the planner phrased them vaguely) | no comparison, no chart |
+
+![Live run that stopped at insufficient evidence](docs/images/live-insufficient.png)
+
+The agent is only as steady as the model planning and judging it; expect the same question to land differently between runs.
 
 > **Run it locally.** The agent has no authentication or rate limit. Deployed publicly with your keys, anyone could spend them.
 
@@ -89,6 +106,10 @@ npm run build   # production build of the web app
   the web ones exposed two real bugs: a run that ended with `ok: true` erased a pending Liner provenance error, so an answer whose search
   result was missing or unknown still finished as if it were live; and closing the browser did not stop the agent run.
 - Added GitHub Actions CI and the MIT license.
+- Live runs failed on two bugs found while verifying with real keys: the web parsers took the Agents SDK's repeated reports of one tool call
+  for a reused call ID, so every real run showed "Liner 연결 실패" and no sources; and the planner wrote long keyword lists as search queries,
+  for which Liner returns references but no text, so every claim came out `insufficient`. Sources from all searches are now listed, not just the last.
+- Removed two unpinned debugging scripts that the dev server loaded from unpkg.
 
 ## License
 

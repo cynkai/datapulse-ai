@@ -63,11 +63,15 @@ export default function Page() {
       case "evidence-source":
         setEvidenceSource((previous) => previous === "mock" || event.source === "mock" ? "mock" : event.source);
         break;
+      // Each sub-question's search reports its own sources; keep them all.
       case "references":
-        setReferences([...event.references]);
+        setReferences((previous) => {
+          const seen = new Set(previous.map((reference) => reference.url));
+          return [...previous, ...event.references.filter((reference) => !seen.has(reference.url))];
+        });
         break;
       case "chunks":
-        setChunks([...event.chunks]);
+        setChunks((previous) => [...previous, ...event.chunks]);
         break;
       case "verdicts": {
         const blocked = event.verdicts.find((verdict) => verdict.verdict !== "supported");
