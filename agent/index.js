@@ -203,5 +203,17 @@ export function startServer({ port = Number(process.env.PORT ?? 4000), runtime }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  startServer();
+  // Read agent/.env when it exists; real environment variables still win.
+  try {
+    process.loadEnvFile(new URL('.env', import.meta.url));
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+  const port = Number(process.env.PORT ?? 4000);
+  startServer({ port }).on('listening', () => {
+    console.log(`[agent] listening on http://localhost:${port}`);
+    for (const name of ['OPENAI_API_KEY', 'LINER_API_KEY']) {
+      if (!process.env[name]?.trim()) console.warn(`[agent] ${name} is not set`);
+    }
+  });
 }
