@@ -305,6 +305,10 @@ export function createStreamPayloadParser(handlers: StreamChatHandlers, mode: St
       const callId = stringField(call, "callId") ?? stringField(call, "call_id");
       if (callId !== null) {
         const previous = calls.get(callId);
+        // The Agents SDK reports one call several times (model stream items,
+        // the completed response, then the run item). Only a call ID that
+        // comes back under a different tool name is a reuse.
+        if (previous !== undefined && previous.name === name) return;
         if (previous !== undefined) {
           if (previous.name === "liner_search" || name === "liner_search") invalidateLinerProvenance();
           calls.set(callId, { name, resultSeen: false, invalid: true });

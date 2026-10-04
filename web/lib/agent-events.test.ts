@@ -129,6 +129,19 @@ test("ignores provenance-shaped output from another tool in mixed calls", () => 
   assert.equal(linerEvidenceSourceFromEvents(events), "live");
 });
 
+test("raw-event provenance accepts the same call reported several times", () => {
+  const events: AgentEvent[] = [];
+  const parser = createAgentEventParser({ onEvent: (event) => events.push(event) });
+
+  for (let i = 0; i < 3; i += 1) {
+    parser.push('data: {"type":"raw_model_stream_event","data":{"item":{"type":"function_call","call_id":"call-31","name":"liner_search"}}}\n\n');
+  }
+  parser.push('data: {"type":"raw_model_stream_event","data":{"item":{"type":"function_call_output","call_id":"call-31","name":"liner_search","output":"{\\"source\\":\\"live\\"}"}}}\n\n');
+  parser.finish();
+
+  assert.equal(linerEvidenceSourceFromEvents(events), "live");
+});
+
 test("fails closed after live provenance when a Liner result is unknown or malformed", () => {
   for (const output of ['{"source":"preview"}', '{"source":["live"]}']) {
     const events: AgentEvent[] = [];

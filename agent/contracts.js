@@ -23,7 +23,10 @@ const atomicClaimSchema = z.string().trim().min(1).refine(
 
 export const subQuestionSchema = z.object({
   id: z.string().trim().min(1),
-  query: z.string().trim().min(1),
+  // Liner returns no text chunks for long keyword lists, only references.
+  query: z.string().trim().min(1).describe(
+    'One short natural search question, about 3-8 words, as a person would type it (e.g. "Apple fiscal 2025 revenue"). Do not stack keywords.',
+  ),
   mode: searchModeSchema,
   rationale: z.string().trim().min(1),
   claims: z.array(atomicClaimSchema).min(1),
